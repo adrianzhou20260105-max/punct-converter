@@ -1,0 +1,726 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>标点转换器 · 英文 → 中文</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ===== CSS 变量 ===== */
+    :root {
+      --ink:        #1a1209;
+      --paper:      #f5f0e8;
+      --paper-dark: #ede7d6;
+      --red:        #c0392b;
+      --red-light:  #e74c3c;
+      --gold:       #b8860b;
+      --gold-light: #d4a017;
+      --border:     #c8b89a;
+      --shadow:     rgba(26,18,9,0.15);
+      --muted:      #7a6a52;
+      --success:    #2e7d32;
+      --radius:     4px;
+      --font-body:  'Noto Serif SC', serif;
+      --font-mono:  'JetBrains Mono', monospace;
+    }
+
+    /* ===== Reset ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ===== Body ===== */
+    body {
+      min-height: 100vh;
+      background-color: var(--paper);
+      background-image:
+        repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 27px,
+          rgba(180,160,120,0.18) 27px,
+          rgba(180,160,120,0.18) 28px
+        );
+      font-family: var(--font-body);
+      color: var(--ink);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px 80px;
+    }
+
+    /* ===== 顶部装饰线 ===== */
+    .top-bar {
+      width: 100%;
+      max-width: 860px;
+      height: 6px;
+      background: linear-gradient(90deg, var(--red) 0%, var(--gold) 50%, var(--red) 100%);
+      border-radius: 3px;
+      margin-bottom: 36px;
+    }
+
+    /* ===== 标题区 ===== */
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    header .subtitle {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 4px 14px;
+      border-radius: 2px;
+      margin-bottom: 14px;
+    }
+    header h1 {
+      font-size: clamp(28px, 5vw, 42px);
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: 0.04em;
+    }
+    header h1 em {
+      font-style: normal;
+      color: var(--red);
+    }
+    header p.desc {
+      margin-top: 10px;
+      font-size: 14px;
+      color: var(--muted);
+      max-width: 480px;
+      margin-left: auto;
+      margin-right: auto;
+      line-height: 1.8;
+    }
+
+    /* ===== 主容器 ===== */
+    .container {
+      width: 100%;
+      max-width: 860px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* ===== 编辑区卡片 ===== */
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 2px 12px var(--shadow);
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 18px;
+      background: var(--paper-dark);
+      border-bottom: 1px solid var(--border);
+    }
+    .card-header .label {
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--muted);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+    .card-header .badge {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--muted);
+    }
+    .card-header .badge span {
+      color: var(--gold);
+      font-weight: 600;
+    }
+
+    textarea {
+      display: block;
+      width: 100%;
+      min-height: 200px;
+      padding: 20px 22px;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 1.9;
+      color: var(--ink);
+      background: transparent;
+      border: none;
+      outline: none;
+      resize: vertical;
+      caret-color: var(--red);
+    }
+    textarea::placeholder { color: #b8a990; }
+
+    /* ===== 输出区 ===== */
+    .output-text {
+      min-height: 200px;
+      padding: 20px 22px;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 1.9;
+      color: var(--ink);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .output-text.placeholder {
+      color: #b8a990;
+      font-style: italic;
+    }
+
+    /* ===== 操作区 ===== */
+    .actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 28px;
+      font-family: var(--font-body);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.18s ease;
+      user-select: none;
+    }
+
+    .btn-primary {
+      background: var(--red);
+      color: #fff;
+      box-shadow: 0 3px 0 #8b1a13, 0 4px 14px rgba(192,57,43,0.3);
+    }
+    .btn-primary:hover {
+      background: var(--red-light);
+      transform: translateY(-1px);
+      box-shadow: 0 5px 0 #8b1a13, 0 6px 18px rgba(192,57,43,0.35);
+    }
+    .btn-primary:active {
+      transform: translateY(2px);
+      box-shadow: 0 1px 0 #8b1a13;
+    }
+    .btn-primary:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-secondary {
+      background: var(--paper-dark);
+      color: var(--ink);
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 0 var(--border);
+    }
+    .btn-secondary:hover {
+      background: var(--paper);
+      transform: translateY(-1px);
+    }
+    .btn-secondary:active {
+      transform: translateY(1px);
+      box-shadow: none;
+    }
+    .btn-secondary:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* 清空按钮 */
+    .btn-ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px dashed var(--border);
+      padding: 11px 18px;
+    }
+    .btn-ghost:hover { color: var(--red); border-color: var(--red); }
+
+    /* ===== 状态栏 ===== */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 2px;
+      min-height: 24px;
+    }
+    .status-msg {
+      font-size: 13px;
+      font-family: var(--font-mono);
+      color: var(--muted);
+      transition: all 0.3s;
+    }
+    .status-msg.success { color: var(--success); }
+    .status-msg.error   { color: var(--red); }
+    .status-msg.loading { color: var(--gold); }
+
+    /* 转换统计 */
+    .stats {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 12px 20px;
+      background: var(--paper-dark);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      min-width: 90px;
+    }
+    .stat-num {
+      font-size: 22px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--red);
+    }
+    .stat-label {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+    }
+    #stats-area { display: none; }
+    #stats-area.visible { display: flex; }
+
+    /* ===== 对照表 ===== */
+    .map-toggle {
+      text-align: center;
+      margin-top: 8px;
+    }
+    .map-toggle button {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+      padding: 6px 12px;
+      border-bottom: 1px dashed var(--border);
+      transition: color 0.2s;
+    }
+    .map-toggle button:hover { color: var(--gold); border-color: var(--gold); }
+
+    .map-table-wrap {
+      display: none;
+      margin-top: 20px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: 0 2px 10px var(--shadow);
+    }
+    .map-table-wrap.visible { display: block; }
+
+    .map-table-wrap h3 {
+      padding: 12px 18px;
+      background: var(--paper-dark);
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-family: var(--font-mono);
+      letter-spacing: 0.15em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .map-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      padding: 0;
+    }
+    .map-cell {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: #fff;
+      font-family: var(--font-mono);
+      font-size: 15px;
+    }
+    .map-cell .from { color: var(--red); }
+    .map-cell .arrow { color: var(--border); font-size: 11px; }
+    .map-cell .to { color: var(--ink); font-weight: 600; }
+
+    /* ===== 复制成功动画 ===== */
+    @keyframes flash {
+      0%   { background: rgba(192,57,43,0.12); }
+      100% { background: transparent; }
+    }
+    .flash { animation: flash 0.5s ease; }
+
+    /* ===== Spinner ===== */
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      display: none;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ===== 底部 ===== */
+    footer {
+      margin-top: 50px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--border);
+      font-family: var(--font-mono);
+      letter-spacing: 0.1em;
+    }
+
+    /* ===== 响应式 ===== */
+    @media (max-width: 600px) {
+      .actions { flex-direction: column; align-items: stretch; }
+      .btn { justify-content: center; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="top-bar"></div>
+
+  <header>
+    <div class="subtitle">Punctuation Converter</div>
+    <h1>英文标点 <em>→</em> 中文标点</h1>
+    <p class="desc">全量转换 · 标点纠错 · 引号审查 · 段首缩进 · 出版级排版</p>
+  </header>
+
+  <div class="container">
+
+    <!-- 输入卡片 -->
+    <div class="card">
+      <div class="card-header">
+        <span class="label">输入文本</span>
+        <span class="badge">字符数：<span id="char-count">0</span></span>
+      </div>
+      <textarea
+        id="input-text"
+        placeholder="在此粘贴或输入文本（最多 20000 字符），支持：&#10;· 英文标点转中文：Hello, world! → Hello， world！&#10;· 省略号/破折号：... → ……   -- → ——&#10;· 中英文间距：这是AI工具 → 这是 AI 工具&#10;· 段首自动缩进 + 排版纠错"
+        spellcheck="false"
+        maxlength="100000"
+      ></textarea>
+    </div>
+
+    <!-- 操作区 -->
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-convert">
+          <div class="spinner" id="spinner"></div>
+          <span id="btn-text">转　换</span>
+        </button>
+        <button class="btn btn-ghost" id="btn-clear">清　空</button>
+      </div>
+      <div class="status-bar">
+        <span class="status-msg" id="status-msg"></span>
+      </div>
+    </div>
+
+    <!-- 统计区 -->
+    <div class="stats" id="stats-area">
+      <div class="stat-item">
+        <div class="stat-num" id="stat-replaced">0</div>
+        <div class="stat-label">已替换标点</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num" id="stat-total">0</div>
+        <div class="stat-label">总字符数</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num" id="stat-lines">0</div>
+        <div class="stat-label">文本行数</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num" id="stat-indent">0</div>
+        <div class="stat-label">缩进段落</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num" id="stat-quote-fixed">0</div>
+        <div class="stat-label">引号修复</div>
+      </div>
+    </div>
+
+    <!-- 输出卡片 -->
+    <div class="card">
+      <div class="card-header">
+        <span class="label">转换结果</span>
+        <button class="btn btn-secondary" id="btn-copy" disabled style="padding:5px 16px;font-size:13px;">复制结果</button>
+      </div>
+      <div class="output-text placeholder" id="output-text">转换结果将显示在此处…</div>
+    </div>
+
+    <!-- 标点对照表 -->
+    <div class="map-toggle">
+      <button id="btn-toggle-map">▾ 查看标点映射对照表</button>
+    </div>
+    <div class="map-table-wrap" id="map-table-wrap">
+      <h3>标点映射对照表</h3>
+      <div class="map-grid" id="map-grid">
+        <!-- 由 JS 动态填充 -->
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    Powered by Pyodide · Python · GitHub Pages · 出版级排版流水线 v3
+  </footer>
+
+  <!-- ===== JavaScript ===== -->
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.29.4/full/pyodide.js"></script>
+  <script>
+    let MAX_LENGTH = 100000;
+
+    const inputEl   = document.getElementById('input-text');
+    const outputEl  = document.getElementById('output-text');
+    const btnConv   = document.getElementById('btn-convert');
+    const btnCopy   = document.getElementById('btn-copy');
+    const btnClear  = document.getElementById('btn-clear');
+    const statusEl  = document.getElementById('status-msg');
+    const spinner   = document.getElementById('spinner');
+    const btnText   = document.getElementById('btn-text');
+    const charCount = document.getElementById('char-count');
+    const statsArea = document.getElementById('stats-area');
+    const statReplaced = document.getElementById('stat-replaced');
+    const statTotal    = document.getElementById('stat-total');
+    const statLines    = document.getElementById('stat-lines');
+    const statIndent   = document.getElementById('stat-indent');
+    const statQuoteFix = document.getElementById('stat-quote-fixed');
+    const btnToggleMap = document.getElementById('btn-toggle-map');
+    const mapTableWrap = document.getElementById('map-table-wrap');
+    const mapGrid      = document.getElementById('map-grid');
+
+    let pyodide = null;
+    let utilsModule = null;
+    let processText = null;
+    let getPunctMap = null;
+    let engineReady = false;
+    let mapVisible = false;
+    let lastResult = '';
+
+    btnConv.disabled = true;
+    btnText.textContent = '加载中';
+    setStatus('正在加载转换引擎…首次打开需要一点时间', 'loading');
+
+    const enginePromise = initEngine();
+
+    /* ===== Pyodide 引擎 ===== */
+    async function initEngine() {
+      try {
+        pyodide = await loadPyodide({
+          indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.29.4/full/'
+        });
+
+        const response = await fetch('utils.py', { cache: 'no-cache' });
+        if (!response.ok) {
+          throw new Error(`无法加载 utils.py（HTTP ${response.status}）`);
+        }
+
+        const source = await response.text();
+        pyodide.FS.writeFile('utils.py', source);
+        utilsModule = pyodide.pyimport('utils');
+        processText = utilsModule.process_text;
+        getPunctMap = utilsModule.get_punct_map;
+
+        const maxFromPython = Number(utilsModule.MAX_TEXT_LENGTH);
+        if (Number.isFinite(maxFromPython) && maxFromPython > 0) {
+          MAX_LENGTH = maxFromPython;
+          inputEl.maxLength = String(MAX_LENGTH);
+        }
+
+        engineReady = true;
+        setLoading(false);
+        setStatus('转换引擎加载完成', 'success');
+      } catch (err) {
+        engineReady = false;
+        btnConv.disabled = true;
+        btnText.textContent = '加载失败';
+        setStatus('转换引擎加载失败：' + err.message, 'error');
+        throw err;
+      }
+    }
+
+    function pyToJs(value) {
+      if (value && typeof value.toJs === 'function') {
+        const converted = value.toJs({ dict_converter: Object.fromEntries });
+        if (typeof value.destroy === 'function') value.destroy();
+        return converted;
+      }
+      return value;
+    }
+
+    function getFixedQuoteCount(issues) {
+      if (!Array.isArray(issues)) return 0;
+      return issues.filter((issue) => issue && issue.severity === 'FIXED').length;
+    }
+
+    /* ===== 字符计数 + 超长警告 ===== */
+    inputEl.addEventListener('input', () => {
+      const len = inputEl.value.length;
+      charCount.textContent = len;
+      if (len > MAX_LENGTH) {
+        charCount.style.color = 'var(--red)';
+        setStatus(`⚠ 字符数（${len}）超过上限 ${MAX_LENGTH}，请精简文本`, 'error');
+      } else {
+        charCount.style.color = '';
+        if (statusEl.classList.contains('error')) setStatus('', '');
+      }
+    });
+
+    /* ===== 转换请求（浏览器端 Python，不依赖服务器）===== */
+    btnConv.addEventListener('click', async () => {
+      const text = inputEl.value;
+      if (!text.trim()) {
+        setStatus('请先输入文本', 'error');
+        return;
+      }
+      if (text.length > MAX_LENGTH) {
+        setStatus(`文本超过 ${MAX_LENGTH} 字符限制，请精简后再转换`, 'error');
+        return;
+      }
+
+      setLoading(true);
+      setStatus('排版处理中…', 'loading');
+      try {
+        await enginePromise;
+        const data = pyToJs(processText(text));
+        const fixedCount = getFixedQuoteCount(data.quote_issues);
+
+        lastResult = data.result;
+        outputEl.textContent = data.result;
+        outputEl.classList.remove('placeholder');
+
+        btnCopy.disabled = false;
+
+        // 更新统计
+        statReplaced.textContent = data.punct_count ?? 0;
+        statTotal.textContent    = text.length;
+        statLines.textContent    = text.split('\n').length;
+        statIndent.textContent   = data.indent_lines ?? 0;
+        statQuoteFix.textContent = fixedCount;
+        statsArea.classList.add('visible');
+
+        // 状态栏：主摘要 + 引号审查结果
+        const qSummary = fixedCount > 0
+          ? ` · 引号自动修复 ${fixedCount} 处`
+          : '';
+        setStatus(
+          `✓ 处理完成 · 替换标点 ${data.punct_count ?? 0} 个 · 缩进 ${data.indent_lines ?? 0} 段${qSummary}`,
+          'success'
+        );
+      } catch (err) {
+        setStatus('❌ ' + err.message, 'error');
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    /* ===== 复制结果 ===== */
+    btnCopy.addEventListener('click', async () => {
+      if (!lastResult) return;
+      try {
+        await navigator.clipboard.writeText(lastResult);
+        btnCopy.textContent = '✓ 已复制！';
+        outputEl.classList.add('flash');
+        setStatus('结果已复制到剪贴板', 'success');
+        setTimeout(() => {
+          btnCopy.textContent = '复制结果';
+          outputEl.classList.remove('flash');
+        }, 2000);
+      } catch {
+        // 兼容性回退
+        const ta = document.createElement('textarea');
+        ta.value = lastResult;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        btnCopy.textContent = '✓ 已复制！';
+        setStatus('结果已复制到剪贴板', 'success');
+        setTimeout(() => { btnCopy.textContent = '复制结果'; }, 2000);
+      }
+    });
+
+    /* ===== 清空 ===== */
+    btnClear.addEventListener('click', () => {
+      inputEl.value = '';
+      charCount.textContent = '0';
+      charCount.style.color = '';
+      outputEl.textContent = '转换结果将显示在此处…';
+      outputEl.classList.add('placeholder');
+      btnCopy.disabled = true;
+      statsArea.classList.remove('visible');
+      lastResult = '';
+      setStatus(engineReady ? '转换引擎加载完成' : '', engineReady ? 'success' : '');
+    });
+
+    /* ===== 支持 Ctrl+Enter 快捷键转换 ===== */
+    inputEl.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        btnConv.click();
+      }
+    });
+
+    /* ===== 对照表切换 ===== */
+    btnToggleMap.addEventListener('click', async () => {
+      mapVisible = !mapVisible;
+      mapTableWrap.classList.toggle('visible', mapVisible);
+      btnToggleMap.textContent = mapVisible
+        ? '▴ 隐藏标点映射对照表'
+        : '▾ 查看标点映射对照表';
+
+      if (mapVisible && mapGrid.children.length === 0) {
+        try {
+          await enginePromise;
+          const data = pyToJs(getPunctMap());
+          Object.entries(data).forEach(([from, to]) => {
+            const cell = document.createElement('div');
+            cell.className = 'map-cell';
+            cell.innerHTML = `
+              <span class="from">${escapeHtml(String(from))}</span>
+              <span class="arrow">→</span>
+              <span class="to">${escapeHtml(String(to))}</span>
+            `;
+            mapGrid.appendChild(cell);
+          });
+        } catch {
+          mapGrid.innerHTML = '<div style="padding:16px;color:#999;">加载失败</div>';
+        }
+      }
+    });
+
+    /* ===== 工具函数 ===== */
+    function setLoading(on) {
+      btnConv.disabled = on || !engineReady;
+      spinner.style.display = on ? 'block' : 'none';
+      btnText.textContent = on ? '处理中' : (engineReady ? '转　换' : '加载中');
+    }
+
+    function setStatus(msg, type) {
+      statusEl.textContent = msg;
+      statusEl.className = 'status-msg' + (type ? ' ' + type : '');
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+  </script>
+</body>
+</html>
