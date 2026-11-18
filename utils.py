@@ -1,17 +1,7 @@
 # utils.py
 # 中文排版工具 - 核心处理模块（v3）
 #
-# 处理流程（严格顺序）：
-#   0. protect_special_patterns  保护不应转换的内容（版本号/URL/代码等）→ 占位符
-#   1. convert_punctuation        英文标点 → 中文标点（逐字符，无遗漏）
-#   2. normalize_symbols          省略号、破折号、全角→半角
-#   3. fix_chinese_punctuation    中文标点纠错（重复/错误组合/多余空格/引号成对）
-#   4. format_spacing             标点前后空格规范（已移除中英间距自动插入）
-#   5. restore_patterns           还原被保护的内容
-#   6. add_paragraph_indent       段首全角缩进（出版级）
-#   7. clean_whitespace           行尾空格、连续空行清理
-#
-# 主入口：process_text(text) 按序调用上述所有步骤
+# 主入口：process_text(text) 负责标点转换、引号审查和空格清理。
 
 import re
 
@@ -40,7 +30,6 @@ PUNCT_MAP = {
     '~':  '～',
     '`':  '｀',
     '@':  '＠',
-    '#':  '＃',
     '$':  '￥',
     '%':  '％',
     '&':  '＆',
@@ -55,24 +44,42 @@ _ZH_PUNCT  = r'，。？！：；、\u201c\u201d\u2018\u2019【】《》（）�
 # ──────────────────────────────────────────────
 
 # 占位符格式：使用 \x02 \x03 作为边界（ASCII控制字符，不在任何映射表中）
-# 绝对不能包含任何 PUNCT_MAP 中的字符（, . ? ! : ; ( ) [ ] { } < > ~ ` @ # $ % & | _）
+# 绝对不能包含任何 PUNCT_MAP 中的字符（, . ? ! : ; ( ) [ ] { } < > ~ ` @ $ % & | _）
 _PLACEHOLDER_FMT = '\x02PROT{}\x03'
 _PLACEHOLDER_PAT = re.compile(r'\x02PROT\d+\x03')
+
+# 分组后的整数可带小数，整组优先于小数和版本号一起保护。
+_DIGITS = '0-9０-９'
+_GROUP_SEPARATORS = ',，\u00a0\u2009\u202f'
+_GROUPED_NUMBER_PAT = re.compile(
+    rf'(?<![\d.．])(?<![\d][{_GROUP_SEPARATORS}])'
+    rf'[{_DIGITS}]{{1,3}}(?P<separator>[{_GROUP_SEPARATORS}])[{_DIGITS}]{{3}}'
+    rf'(?:(?P=separator)[{_DIGITS}]{{3}})*'
+    rf'(?:[.．][{_DIGITS}]+)?'
+    rf'(?![\d]|[{_GROUP_SEPARATORS}.．][\d])'
+)
+_GROUPED_NUMBER_TRANSLATION = str.maketrans('０１２３４５６７８９．', '0123456789.', _GROUP_SEPARATORS)
+
+_CODE_BLOCK_PAT = re.compile(r'```[\s\S]*?```|`[^`\n]+`')
+_DOUBLE_QUOTES = '"＂“”'
+_ENGLISH_LINE_PARTS = re.compile(r'(' + _PLACEHOLDER_PAT.pattern + r'|[' + _DOUBLE_QUOTES + r'])')
+_SPACE_MARKS = '\u3000␠␣□☐▢⬜'
+_SPACE_MARK_TRANSLATION = str.maketrans({char: ' ' for char in _SPACE_MARKS})
+_HASH_MARK_TRANSLATION = str.maketrans('', '', '#＃﹟')
 
 # 需要保护的模式，按优先级从高到低排列（先匹配的先保护）
 # 格式：(描述, 正则表达式)
 _PROTECT_PATTERNS = [
-    # ① URL：http(s):// 或 ftp:// 开头，匹配到空白/换行为止
-    ('URL',
-     re.compile(
-         r'https?://[^\s，。？！：；【】《》（）""''、\x02\x03]+|'
-         r'ftp://[^\s，。？！：；【】《》（）""''、\x02\x03]+',
-         re.IGNORECASE
-     )),
+    ('Code', _CODE_BLOCK_PAT),
 
-    # ② 邮箱：word@word.word
+    ('URL',
+     re.compile(r'''(?:https?|ftp)://[^\s，。？！：；【】《》（）"'＂“”‘’、\x02\x03]+''',
+                re.IGNORECASE)),
+
     ('Email',
      re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}')),
+
+    ('GroupedNumber', _GROUPED_NUMBER_PAT),
 
     # ③ 版本号：vX.Y / X.Y.Z（至少含一个点分隔的数字结构）
     #    \b 在中文边界失效，改用 (?<![.\d]) 负向后查，(?![.\d]) 负向前查
@@ -105,60 +112,47 @@ _PROTECT_PATTERNS = [
     # ⑧ 特殊技术符号
     ('TechSymbol',
      re.compile(
-         r'\bC\+\+\b|\bC#\b|'
+         r'\bC\+\+\b|'
          r'\b[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*(?:\(\))?'  # a.b() / Node.js
      )),
 
-    # ⑨ Markdown 标题行首 # 序列（防止 # 被转为 ＃）
-    #    匹配行首 1-6 个 # 后紧跟空格，只保护 # 序列本身（不含空格）
-    ('MarkdownHash',
-     re.compile(r'(?m)^#{1,6}(?= )')),
 ]
 
 
 def protect_special_patterns(text: str) -> tuple[str, dict]:
-    """
-    将所有需要保护的特殊模式替换为占位符。
-    返回：(替换后的文本, {占位符: 原始内容} 映射表)
-
-    保护顺序：URL > Email > 文件名 > 版本号 > 标题编号 >
-              小数/日期 > 缩写 > 技术符号 > 英文主体行
-    """
+    """保护代码、URL、数字等内容。纯英文行仍保留原标点，但处理双引号。"""
     store: dict[str, str] = {}
-    counter = [0]   # 用列表使嵌套函数可修改
 
     def make_placeholder(original: str) -> str:
-        key = _PLACEHOLDER_FMT.format(counter[0])
+        key = _PLACEHOLDER_FMT.format(len(store))
         store[key] = original
-        counter[0] += 1
         return key
 
-    def replace_match(m: re.Match) -> str:
-        return make_placeholder(m.group(0))
-
-    # 按顺序应用所有正则保护规则
-    for _name, pattern in _PROTECT_PATTERNS:
-        text = pattern.sub(replace_match, text)
-
-    # 英文主体行保护：逐行判断
-    lines = text.split('\n')
-    protected_lines = []
-    for line in lines:
-        # 跳过已经全部是占位符的行（避免重复保护）
-        if _PLACEHOLDER_PAT.fullmatch(line.strip()):
-            protected_lines.append(line)
-            continue
-        en_chars = len(re.findall(r'[A-Za-z]', line))
-        zh_chars = len(re.findall(r'[\u4e00-\u9fff]', line))
-        total = en_chars + zh_chars
-        # 英文字符占比 > 70% 且总字符 > 10 → 整行保护
-        if total > 10 and en_chars / total > 0.70:
-            protected_lines.append(make_placeholder(line))
+    for name, pattern in _PROTECT_PATTERNS:
+        if name == 'GroupedNumber':
+            text = pattern.sub(
+                lambda match: make_placeholder(match[0].translate(_GROUPED_NUMBER_TRANSLATION)),
+                text,
+            )
         else:
-            protected_lines.append(line)
-    text = '\n'.join(protected_lines)
+            text = pattern.sub(lambda match: make_placeholder(match[0]), text)
 
-    return text, store
+    protected_lines = []
+    for line in text.split('\n'):
+        visible = _PLACEHOLDER_PAT.sub('', line)
+        en_chars = len(re.findall(r'[A-Za-z]', visible))
+        zh_chars = len(re.findall(r'[\u4e00-\u9fff]', visible))
+        total = en_chars + zh_chars
+        if total > 10 and en_chars / total > 0.70:
+            parts = _ENGLISH_LINE_PARTS.split(line)
+            # 偶数下标是正文，保留其边缘空白以辅助判断引号方向。
+            parts[::2] = [
+                re.sub(r'\S(?:.*\S)?', lambda match: make_placeholder(match[0]), part)
+                for part in parts[::2]
+            ]
+            line = ''.join(parts)
+        protected_lines.append(line)
+    return '\n'.join(protected_lines), store
 
 
 def restore_patterns(text: str, store: dict) -> str:
@@ -234,7 +228,6 @@ def fix_chinese_punctuation(text: str) -> str:
     1. 压缩重复标点（！！！！！ → ！！）
     2. 修正错误组合（，。→ 。  ，，→ ，）
     3. 删除中文标点前多余空格（你好 ，→ 你好，）
-    4. 英文引号成对替换为中文引号（" " → " "）
     """
     # ① 清理转换后产生的连续句号
     text = re.sub(r'。{3,}', '……', text)
@@ -255,11 +248,9 @@ def fix_chinese_punctuation(text: str) -> str:
 
     # ④ 删除中文标点前的多余空格
     text = re.sub(
-        r'\s+(?=[，。？！：；、\u201c\u201d\u2018\u2019【】《》（）｛｝～……——·])',
+        r'[ 	]+(?=[，。？！：；、\u201c\u201d\u2018\u2019【】《》（）｛｝～……——·])',
         '', text
     )
-
-    # ⑤ 引号处理已移至独立函数 normalize_quotes（Step 3.2），此处不再处理
 
     return text
 
@@ -283,72 +274,70 @@ _R_DQUOTE = '\u201d'   # "
 _L_SQUOTE = '\u2018'   # '
 _R_SQUOTE = '\u2019'   # '
 
-# 判断"文本是否已包含中文排版引号"的阈值：
-# 只要存在任意一个中文引号字符，就视为"已是中文排版"，跳过对应类型的转换
-_ZH_DQUOTE_PAT = re.compile(r'[' + _L_DQUOTE + _R_DQUOTE + r']')
 _ZH_SQUOTE_PAT = re.compile(r'[' + _L_SQUOTE + _R_SQUOTE + r']')
+_DOUBLE_QUOTE_PAT = re.compile(r'[' + _DOUBLE_QUOTES + ']')
 
-# 代码块保护：``` ... ``` 或 ` ... `（行内代码），在引号转换前保护，避免误处理
-_CODE_BLOCK_PAT = re.compile(r'```[\s\S]*?```|`[^`\n]+`')
+
+def _normalize_double_quotes(text: str) -> str:
+    """识别半角和全角直双引号，利用已有弯引号及上下文判断开闭。"""
+    matches = list(_DOUBLE_QUOTE_PAT.finditer(text))
+    parts = []
+    opened = []
+    start = 0
+    for index, match in enumerate(matches):
+        position = match.start()
+        quote = match[0]
+        parts.append(text[start:position])
+        start = position + 1
+
+        if quote == _L_DQUOTE:
+            opened.append(quote)
+        elif quote == _R_DQUOTE:
+            if opened:
+                opened.pop()
+        else:
+            before = text[position - 1] if position else ''
+            after = text[start:start + 1]
+            opens_in_context = (
+                before and before in '：:（(【[《“‘—'
+                and bool(after) and not after.isspace()
+                and after not in _DOUBLE_QUOTES + '，。？！：；、）】》,.?!:;)]'
+            )
+            # 已有中文外引号夹着一对直引号时，优先保留外层。
+            inside_curly_pair = (
+                bool(opened) and opened[-1] == _L_DQUOTE
+                and index + 2 < len(matches)
+                and matches[index + 1][0] in '"＂'
+                and matches[index + 2][0] == _R_DQUOTE
+            )
+            if not opened or opens_in_context or inside_curly_pair:
+                opened.append(quote)
+                quote = _L_DQUOTE
+            else:
+                opened.pop()
+                quote = _R_DQUOTE
+
+        parts.append(quote)
+    parts.append(text[start:])
+    return ''.join(parts)
 
 
 def normalize_quotes(text: str) -> str:
-    """
-    将英文排版引号成对转换为中文排版引号，兼顾幂等性与上下文感知。
+    """转换直引号，保留已有的中文引号及代码中的引号。"""
+    code_store: dict[str, str] = {}
 
-    ── 设计原则 ──────────────────────────────────────────────────
-    1. 幂等（避免重复处理）
-       - 若文本中已存在中文双引号（" 或 "），则跳过双引号转换
-       - 若文本中已存在中文单引号（' 或 '），则跳过单引号转换
-       - 保证对"已规范文本"再次调用结果不变
+    def protect_code(match: re.Match) -> str:
+        key = f'\x04CODE{len(code_store)}\x05'
+        code_store[key] = match[0]
+        return key
 
-    2. 开/闭引号判断（上下文感知）
-       逐字符扫描，维护奇偶计数器：
-       - 第奇数个引号 → 开引号（" / '）
-       - 第偶数个引号 → 闭引号（" / '）
-       同时结合前后字符做修正：
-       - 引号前为空格/行首/标点 → 强制开引号
-       - 引号后为空格/行尾/标点 → 强制闭引号
-
-    3. 代码内容保护
-       处理前先将 ``` ... ``` 和 ` ... ` 替换为占位符，
-       避免代码字符串中的引号被误转换，处理后还原。
-
-    4. 不改变原文结构
-       仅替换引号字符本身，不添加、删除任何其他内容。
-
-    ── 边界情况处理 ──────────────────────────────────────────────
-    - 单引号可能是英文所有格（it's / don't）→ 通过前字符判断：
-      前面紧跟字母则视为所有格，保留英文单引号不转换
-    - 奇数个引号（未成对）→ 按奇偶顺序处理，最后一个为开引号
-    - 嵌套引号（中文习惯双套单）→ 外层双引号、内层单引号各自独立计数
-    - 空文本 / 无引号文本 → 原样返回，O(n) 扫描无副作用
-    """
-
-    # ── 步骤 A：保护代码块（占位符机制）──
-    code_store: list[str] = []
-
-    def _protect_code(m: re.Match) -> str:
-        code_store.append(m.group(0))
-        return f'\x04CODE{len(code_store) - 1}\x05'
-
-    text = _CODE_BLOCK_PAT.sub(_protect_code, text)
-
-    # ── 步骤 B：双引号转换（幂等判断）──
-    if not _ZH_DQUOTE_PAT.search(text):
-        text = _context_aware_replace(text, '"', _L_DQUOTE, _R_DQUOTE,
-                                      is_apostrophe=False)
-
-    # ── 步骤 C：单引号转换（幂等判断）──
+    text = _CODE_BLOCK_PAT.sub(protect_code, text)
+    text = _normalize_double_quotes(text)
     if not _ZH_SQUOTE_PAT.search(text):
         text = _context_aware_replace(text, "'", _L_SQUOTE, _R_SQUOTE,
                                       is_apostrophe=True)
 
-    # ── 步骤 D：还原代码块 ──
-    for i, code in enumerate(code_store):
-        text = text.replace(f'\x04CODE{i}\x05', code)
-
-    return text
+    return re.sub(r'\x04CODE\d+\x05', lambda match: code_store.get(match[0], match[0]), text)
 
 
 def _context_aware_replace(text: str, char: str,
@@ -521,7 +510,7 @@ def audit_and_repair_quotes(text: str) -> tuple[str, QuoteAuditReport]:
         code_store.append(m.group(0))
         return f'\x06AUD{len(code_store) - 1}\x07'
 
-    text = _AUDIT_CODE_PAT.sub(_protect, text)
+    text = _CODE_BLOCK_PAT.sub(_protect, text)
 
     # ── P1  残留英文引号修复 ─────────────────────────────────────
     def _fix_residual_dquote(m: re.Match) -> str:
@@ -869,37 +858,18 @@ def clean_whitespace(text: str) -> str:
 # ──────────────────────────────────────────────
 
 def process_text(text: str) -> dict:
-    """
-    按规定顺序执行全部处理步骤：
-      0. protect_special_patterns  → 占位符保护
-      1. convert_punctuation       → 英文标点转中文
-      2. normalize_symbols         → 省略号/破折号/全角半角
-      3. fix_chinese_punctuation   → 标点纠错（重复/错误组合/空格）
-      3.2 normalize_quotes         → 引号规范化（幂等、上下文感知开闭引号）
-      3.3 audit_and_repair_quotes  → 引号质量审查与自动修复（成对/嵌套/残留/重复）
-      3.5 remove_markdown_stars    → 删除 Markdown/Obsidian * 标记
-      4. format_spacing            → 标点前后空格规范
-      5. restore_patterns          → 还原占位符
-      6. add_paragraph_indent      → 段首缩进
-      6.5 clean_spaces_per_line    → 按行清理无用空格（保留缩进/标题/英文词间距）
-      7. clean_whitespace          → 行尾/空行清理
-
-    Returns:
-        {
-            "result":        最终文本,
-            "punct_count":   替换的英文标点数,
-            "indent_lines":  添加缩进的段落数,
-            "quote_issues":  引号审查问题列表（list[dict]），空列表表示无问题,
-            "quote_summary": 引号审查摘要字符串（供日志/前端展示）,
-        }
-    """
+    """返回清理后的文本、标点统计和引号审查结果。"""
     # 统计原始可替换英文标点数（保护前）
     punct_count = sum(
         1 for ch in text
-        if ch in PUNCT_MAP or ch in ('"', "'", '-')
+        if ch in PUNCT_MAP or ch in ('"', '＂', "'", '-')
     )
 
-    # 0. 保护特殊模式
+    # 删除井号及其标题间距，清理段首的可见空格标记。
+    text = re.sub(r'(?m)^[ 	]*[#＃﹟]+[ 	]*', '', text)
+    text = text.translate(_HASH_MARK_TRANSLATION)
+    text = re.sub(rf'(?m)^[ 	]*[{_SPACE_MARKS}][ 	{_SPACE_MARKS}]*', '', text)
+    text = text.translate(_SPACE_MARK_TRANSLATION)
     text, store = protect_special_patterns(text)
 
     # 1-4. 标点转换与排版
@@ -914,22 +884,13 @@ def process_text(text: str) -> dict:
     # 5. 还原被保护的内容
     text = restore_patterns(text, store)
 
-    # 统计即将缩进的行数（还原后，真实行数）
-    lines_before_indent = text.split('\n')
-    indent_lines = sum(
-        1 for ln in lines_before_indent
-        if ln.strip() and not ln.startswith(INDENT)
-    )
-
-    # 6-7. 缩进与清理
-    text = add_paragraph_indent(text)
-    text = clean_spaces_per_line(text)   # 6.5 按行清理无用空格
+    text = clean_spaces_per_line(text)
     text = clean_whitespace(text)
 
     return {
         "result":        text,
         "punct_count":   punct_count,
-        "indent_lines":  indent_lines,
+        "indent_lines":  0,  # 兼容原有调用方，默认不再添加缩进。
         "quote_issues":  q_report.issues,
         "quote_summary": q_report.summary(),
     }
@@ -964,6 +925,31 @@ def run_tests():
     print(sep)
 
     unit_cases = [
+        ('主流程：清理井号和可见空格标记',
+         lambda t: process_text(t)['result'],
+         '## 收支小结\n\u3000＃备□注␣已核对﹟。',
+         '收支小结\n备注已核对。'),
+
+        ('主流程：千分位移除，小数及数字列表保留',
+         lambda t: process_text(t)['result'],
+         '收入-1,234,567.89；支出１２，３４５．６０；另有2\u202f345；编号1,2,3。',
+         '收入-1234567.89；支出12345.60；另有2345；编号1，2，3。'),
+
+        ('主流程：纯英文引语与受保护的数字',
+         lambda t: process_text(t)['result'],
+         '"The total is 1,234.50," she said.',
+         lambda r: '“The total is 1234.50,”' in r and '\x02' not in r),
+
+        ('主流程：混用全角、半角和弯引号',
+         lambda t: process_text(t)['result'],
+         '“确认"后说＂确定＂。\n"下一段"。',
+         '“确认”后说“确定”。\n“下一段”。'),
+
+        ('主流程：链接和代码旁的引号',
+         lambda t: process_text(t)['result'],
+         '"https://example.com"和`print("ok")`',
+         '“https://example.com”和`print("ok")`'),
+
         # protect_special_patterns
         ('版本号保护：1.0 不转换',
          lambda t: process_text(t)['result'],
@@ -1058,10 +1044,10 @@ def run_tests():
          '\u201c你好\u201d',
          '\u201c你好\u201d'),
 
-        ('双引号：文本含中文引号则跳过英文双引号',
+        ('双引号：混排时转换剩余直引号',
          normalize_quotes,
          '\u201c已规范\u201d和"未规范"混排',
-         '\u201c已规范\u201d和"未规范"混排'),
+         '\u201c已规范\u201d和\u201c未规范\u201d混排'),
 
         ('单引号：基础成对转换',
          normalize_quotes,
@@ -1431,13 +1417,10 @@ def run_tests():
             ],
         },
         {
-            'name': '多段落缩进与空行',
+            'name': '多段落与空行',
             'input': '第一段。\n\n第二段。\n\n\n\n第三段。',
             'checks': [
-                ('段首缩进',    lambda r: all(
-                    ln.startswith('\u3000\u3000') or ln == ''
-                    for ln in r.split('\n')
-                )),
+                ('段首不新增全角空格', lambda r: '\u3000' not in r),
                 ('空行不超1个', lambda r: '\n\n\n' not in r),
             ],
         },
@@ -1447,10 +1430,10 @@ def run_tests():
             'checks': [
                 ('中文字符间无空格',  lambda r: '我们去吃饭' in r),
                 ('行首缩进保留',      lambda r: any(
-                    ln.startswith('    ') or ln.startswith('\u3000\u3000    ')
+                    ln.startswith('    ')
                     for ln in r.split('\n')
                 )),
-                ('Markdown标题保留',  lambda r: '## 项目背景' in r),
+                ('标题文字保留', lambda r: '项目背景' in r and '#' not in r),
                 ('中文标点转换',      lambda r: '，' in r and '！' in r),
                 ('中文内容间无空格',  lambda r: '你好，世界！' in r),
             ],
@@ -1493,7 +1476,7 @@ def run_tests():
             ],
         },
         {
-            'name': '引号幂等：已含中文引号则跳过英文双引号',
+            'name': '引号幂等：保留已有中文引号',
             'input': '\u201c已规范\u201d，请确认。',
             'checks': [
                 ('中文引号不重复', lambda r: r.count('\u201c') == 1),
@@ -1541,4 +1524,4 @@ def run_tests():
 
 
 if __name__ == '__main__':
-    run_tests()
+    raise SystemExit(0 if run_tests() else 1)

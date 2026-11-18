@@ -4,13 +4,13 @@
 from flask import Flask, render_template, request, jsonify
 from utils import process_text, get_punct_map, MAX_TEXT_LENGTH
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=".")
 
 
 @app.route("/")
 def index():
     """渲染主页"""
-    return render_template("index.html")
+    return render_template("index.html", engine="flask")
 
 
 @app.route("/convert", methods=["POST"])
@@ -21,7 +21,7 @@ def convert():
     响应体：{
         "result":          最终文本,
         "count":           替换的英文标点数,
-        "indent_lines":    添加缩进的段落数,
+        "indent_lines":    缩进段落数（兼容字段，现为 0）,
         "quote_issues":    引号审查问题列表（list[dict]），空表示无问题,
         "quote_summary":   引号审查摘要（字符串），供前端气泡/提示展示,
         "quote_fixed":     自动修复的问题数量（int）,
