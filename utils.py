@@ -38,9 +38,10 @@ PUNCT_MAP = {
 }
 
 # CJK 字符范围（用于间距正则，避免各处重复书写）
-_CJK_CHARS = r'\u4e00-\u9fff\u3400-\u4dbf\uff00-\uffef\u3000-\u303f'
-# 中文标点集合（用于空格清理正则）
-_ZH_PUNCT  = r'，。？！：；、\u201c\u201d\u2018\u2019【】《》（）｛｝～……——·'
+_CJK_CHAR_PAT = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\uff00-\uffef\u3000-\u303f]')
+# 中文标点集合（用于空格清理）
+_ZH_PUNCT = '，。？！：；、“”‘’【】《》（）｛｝～…—·'
+_LATIN_ALNUM_PAT = re.compile(r'[A-Za-z0-9]')
 # ──────────────────────────────────────────────
 
 # 占位符格式：使用 \x02 \x03 作为边界（ASCII控制字符，不在任何映射表中）
@@ -62,7 +63,11 @@ _GROUPED_NUMBER_TRANSLATION = str.maketrans('０１２３４５６７８９．',
 
 _CODE_BLOCK_PAT = re.compile(r'```[\s\S]*?```|`[^`\n]+`')
 _DOUBLE_QUOTES = '"＂“”'
-_ENGLISH_LINE_PARTS = re.compile(r'(' + _PLACEHOLDER_PAT.pattern + r'|[' + _DOUBLE_QUOTES + r'])')
+_DASH_RUN_PAT = re.compile(r'[-—–－]{2,}')
+_ENGLISH_LINE_PARTS = re.compile(
+    rf'({_PLACEHOLDER_PAT.pattern}|[{_DOUBLE_QUOTES}]|{_DASH_RUN_PAT.pattern})'
+)
+_ENGLISH_SPACE_MARK_PAT = re.compile(r'(?<=[A-Za-z]{2})·(?=[A-Za-z]{2})')
 _SPACE_MARKS = '\u3000␠␣□☐▢⬜'
 _SPACE_MARK_TRANSLATION = str.maketrans({char: ' ' for char in _SPACE_MARKS})
 _HASH_MARK_TRANSLATION = str.maketrans('', '', '#＃﹟')
@@ -80,6 +85,8 @@ _PROTECT_PATTERNS = [
      re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}')),
 
     ('GroupedNumber', _GROUPED_NUMBER_PAT),
+
+    ('CommandFlag', re.compile(r'(?<![\w-])--[A-Za-z][A-Za-z0-9_-]*')),
 
     # ③ 版本号：vX.Y / X.Y.Z（至少含一个点分隔的数字结构）
     #    \b 在中文边界失效，改用 (?<![.\d]) 负向后查，(?![.\d]) 负向前查
@@ -120,7 +127,7 @@ _PROTECT_PATTERNS = [
 
 
 def protect_special_patterns(text: str) -> tuple[str, dict]:
-    """保护代码、URL、数字等内容。纯英文行仍保留原标点，但处理双引号。"""
+    """保护代码、URL、数字和纯英文行中普通标点。"""
     store: dict[str, str] = {}
 
     def make_placeholder(original: str) -> str:
@@ -137,6 +144,8 @@ def protect_special_patterns(text: str) -> tuple[str, dict]:
         else:
             text = pattern.sub(lambda match: make_placeholder(match[0]), text)
 
+    # Word 复制文本中的词间空格标记还原为普通空格。
+    text = _ENGLISH_SPACE_MARK_PAT.sub(' ', text)
     protected_lines = []
     for line in text.split('\n'):
         visible = _PLACEHOLDER_PAT.sub('', line)
@@ -197,17 +206,15 @@ def convert_punctuation(text: str, punct_map: dict = None) -> str:
 def normalize_symbols(text: str) -> str:
     """
     1. 英文省略号（3个+句点）→ ……；转换后的连续句号也规范化
-    2. 破折号 -- / --- → ——；单个 em-dash → ——；多个——压缩
+    2. 连续横线 → 单个长横线；原有单横线保持原样
     3. 全角英文字母/数字 → 半角（Ａ→A，１→1）
     """
     # ① 省略号
     text = re.sub(r'\.{3,}', '……', text)     # 残留英文省略号
     text = re.sub(r'。{3,}', '……', text)     # 转换后的连续句号
 
-    # ② 破折号
-    text = re.sub(r'-{2,}', '——', text)
-    text = re.sub(r'(?<!—)—(?!—)', '——', text)
-    text = re.sub(r'——{2,}', '——', text)
+    # ② 合并连续横线，保留单个连字符和负号。
+    text = _DASH_RUN_PAT.sub('—', text)
 
     # ③ 全角ASCII字母/数字 → 半角
     def fullwidth_to_half(m: re.Match) -> str:
@@ -248,7 +255,7 @@ def fix_chinese_punctuation(text: str) -> str:
 
     # ④ 删除中文标点前的多余空格
     text = re.sub(
-        r'[ 	]+(?=[，。？！：；、\u201c\u201d\u2018\u2019【】《》（）｛｝～……——·])',
+        r'(?<=[^ \t\r\n])[ \t]+(?=[，。？！：；、】》）｝～…—·])',
         '', text
     )
 
@@ -713,97 +720,48 @@ def remove_markdown_stars(text: str) -> str:
 # ──────────────────────────────────────────────
 
 def format_spacing(text: str) -> str:
-    """
-    规范标点前后空格（已移除中英文自动加空格功能）：
-    1. 中文标点前不留空格（二次保障，fix_chinese_punctuation 已处理过一遍）
-    2. 中文标点后不加多余空格（中文排版习惯）
-    注意：不再自动在中文与英文/数字之间插入空格。
-    """
-    # ① 中文标点前的空格
-    text = re.sub(
-        r' +(?=[，。？！：；、\u201c\u201d\u2018\u2019【】《》（）｛｝～……——·])',
-        '', text
-    )
-    # ② 中文标点后的多余空格
-    text = re.sub(
-        r'([，。？！：；、\u201c\u201d\u2018\u2019【】（）｛｝……——·]) +',
-        r'\1', text
-    )
-    return text
+    """保留英文词间距，并清理中文及标点附近的多余空格。"""
+    def adjust_gap(match: re.Match) -> str:
+        gap = match[0]
+        start, end = match.span()
+        if start == 0 or end == len(text):
+            return gap
+
+        before, after = text[start - 1], text[end]
+        if before in '\r\n' or after in '\r\n':
+            return gap
+
+        latin_before = _LATIN_ALNUM_PAT.fullmatch(before)
+        latin_after = _LATIN_ALNUM_PAT.fullmatch(after)
+        if latin_before and (latin_after or after in '“‘（【《｛'):
+            return gap
+        if latin_after and before in '”’）】》｝':
+            return gap
+        if (latin_after and before in '，。？！：；' and start >= 2
+                and _LATIN_ALNUM_PAT.fullmatch(text[start - 2])):
+            return gap
+
+        if before in _ZH_PUNCT or after in _ZH_PUNCT:
+            return ''
+        if _CJK_CHAR_PAT.fullmatch(before) and _CJK_CHAR_PAT.fullmatch(after):
+            return ''
+        return re.sub(r' {2,}', ' ', gap)
+
+    return re.sub(r'[ \t]+', adjust_gap, text)
 
 
 # ──────────────────────────────────────────────
-# Step 6.5  按行清理无用空格（保留缩进与标题格式）
+# Step 6.5  按行清理空格
 # ──────────────────────────────────────────────
+
 
 def clean_spaces_per_line(text: str) -> str:
-    """
-    按行处理空格，精确区分"应删除"与"应保留"：
-
-    【保留】
-    - 行首缩进：半角空格、Tab、全角空格（U+3000）原样保留
-    - Markdown 标题格式：`# `、`## `、`### ` 等后的第一个空格保留
-    - 英文单词之间的单个空格保留（Hello World → Hello World）
-
-    【删除 / 压缩】
-    - 中文字符之间的多余空格：我 们 去 → 我们去
-    - 中文字符与中文标点之间的空格：你好 ， → 你好，
-    - 中文标点与中文字符之间的空格：， 你好 → ，你好
-    - 任意字符与中文标点之间的空格（含英文后接中文标点）：Hello ， → Hello，
-    - 内容区连续多余空格压缩为单个（Hello   World → Hello World）
-
-    实现要点：
-    - 逐行处理，避免换行符被误删
-    - 先分离行首缩进，再分离 Markdown 标题前缀，最后清理内容区
-    - 迭代替换直到稳定，处理连续多个间距（我 们 去 吃 饭）
-    """
-    # 合并 CJK 字符 + 中文标点，用于字符类正则
-    cjk_and_punct = _CJK_CHARS + _ZH_PUNCT
-
-    # 预编译：CJK/中文标点 + 空白 + CJK/中文标点
-    _pat_cjk = re.compile(
-        r'([' + cjk_and_punct + r'])[ \t]+([' + cjk_and_punct + r'])'
-    )
-    # 预编译：任意字符 + 空白 + 中文标点（含英文词后接中文标点）
-    _pat_before_zh_punct = re.compile(
-        r'[ \t]+([' + _ZH_PUNCT + r'])'
-    )
-
+    """清理正文间距，保留行首缩进及 Markdown 标题前缀。"""
     result_lines = []
     for line in text.split('\n'):
-
-        # ── A. 提取行首缩进（半角空格 / Tab / 全角空格均视为缩进字符）──
-        m = re.match(r'^[ \t\u3000]+', line)
-        indent  = m.group(0) if m else ''
-        content = line[len(indent):]
-
-        # ── B. 保护 Markdown 标题前缀（1-6 个 # 后跟一个空格）──
-        heading_prefix = ''
-        hm = re.match(r'^(#{1,6} )', content)
-        if hm:
-            heading_prefix = hm.group(1)   # 例："## "
-            content = content[len(heading_prefix):]
-
-        # ── C. 删除 CJK 字符 / 中文标点 之间的空格（迭代至稳定）──
-        # 例：我 们 去 吃 饭 → 我们去吃饭（需多轮才能消除所有间距）
-        prev = None
-        while prev != content:
-            prev = content
-            content = _pat_cjk.sub(r'\1\2', content)
-
-        # ── D. 删除任意字符与中文标点之间的空格（兜底，含英文后接标点）──
-        # 例：Hello ，世界 → Hello，世界
-        content = _pat_before_zh_punct.sub(r'\1', content)
-
-        # ── E. 压缩内容区连续多余空格为单个（保留英文词间空格）──
-        # 例：Hello   World → Hello World
-        content = re.sub(r'  +', ' ', content)
-
-        # ── F. 行尾空格清理（clean_whitespace 的提前保障）──
-        content = content.rstrip(' \t')
-
-        result_lines.append(indent + heading_prefix + content)
-
+        prefix = re.match(r'[ \t\u3000]*(?:#{1,6} )?', line)[0]
+        content = format_spacing(line[len(prefix):]).rstrip(' \t')
+        result_lines.append(prefix + content)
     return '\n'.join(result_lines)
 
 
@@ -812,30 +770,16 @@ def clean_spaces_per_line(text: str) -> str:
 # ──────────────────────────────────────────────
 
 # ──────────────────────────────────────────────
-# Step 6  段首缩进（出版级，全角空格）
+# Step 6  段首缩进（普通空格）
 # ──────────────────────────────────────────────
 
-INDENT = '\u3000\u3000'   # 两个全角空格（U+3000）
+
+INDENT = '    '
 
 
 def add_paragraph_indent(text: str) -> str:
-    """
-    对每一个非空段落的开头添加两个全角空格缩进（U+3000）。
-    规则：
-    - 空行不处理
-    - 已有全角空格缩进的段落不重复添加
-    """
-    lines = text.split('\n')
-    result = []
-    for line in lines:
-        stripped = line.lstrip('\u3000')
-        if stripped == '':
-            result.append(line)            # 空行原样
-        elif line.startswith(INDENT):
-            result.append(line)            # 已有缩进不重复
-        else:
-            result.append(INDENT + line)
-    return '\n'.join(result)
+    """将非空段落缩进到四个普通空格，较长的已有缩进保持原样。"""
+    return re.sub(r'(?m)^[ \t]{0,3}(?=\S)', INDENT, text)
 
 
 # ──────────────────────────────────────────────
@@ -865,7 +809,8 @@ def process_text(text: str) -> dict:
         if ch in PUNCT_MAP or ch in ('"', '＂', "'", '-')
     )
 
-    # 删除井号及其标题间距，清理段首的可见空格标记。
+    # 统一剪贴板换行，清理井号及段首可见空格标记。
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
     text = re.sub(r'(?m)^[ 	]*[#＃﹟]+[ 	]*', '', text)
     text = text.translate(_HASH_MARK_TRANSLATION)
     text = re.sub(rf'(?m)^[ 	]*[{_SPACE_MARKS}][ 	{_SPACE_MARKS}]*', '', text)
@@ -879,18 +824,25 @@ def process_text(text: str) -> dict:
     text = normalize_quotes(text)                        # 3.2 引号规范化
     text, q_report = audit_and_repair_quotes(text)       # 3.3 引号质量审查
     text = remove_markdown_stars(text)                   # 3.5 删除 Markdown 星号
-    text = format_spacing(text)
 
-    # 5. 还原被保护的内容
-    text = restore_patterns(text, store)
+    # 5. 还原正文以判断英文空格，代码留到排版结束后再还原。
+    code_store = {key: value for key, value in store.items() if _CODE_BLOCK_PAT.fullmatch(value)}
+    text = restore_patterns(text, {key: value for key, value in store.items() if key not in code_store})
 
     text = clean_spaces_per_line(text)
     text = clean_whitespace(text)
+    paragraphs = []
+    indent_lines = 0
+    for line in text.split('\n'):
+        indented = line if line.strip() in code_store else add_paragraph_indent(line)
+        indent_lines += indented != line
+        paragraphs.append(indented)
+    text = restore_patterns('\n'.join(paragraphs), code_store)
 
     return {
         "result":        text,
         "punct_count":   punct_count,
-        "indent_lines":  0,  # 兼容原有调用方，默认不再添加缩进。
+        "indent_lines":  indent_lines,
         "quote_issues":  q_report.issues,
         "quote_summary": q_report.summary(),
     }
@@ -928,12 +880,12 @@ def run_tests():
         ('主流程：清理井号和可见空格标记',
          lambda t: process_text(t)['result'],
          '## 收支小结\n\u3000＃备□注␣已核对﹟。',
-         '收支小结\n备注已核对。'),
+         '    收支小结\n    备注已核对。'),
 
         ('主流程：千分位移除，小数及数字列表保留',
          lambda t: process_text(t)['result'],
          '收入-1,234,567.89；支出１２，３４５．６０；另有2\u202f345；编号1,2,3。',
-         '收入-1234567.89；支出12345.60；另有2345；编号1，2，3。'),
+         '    收入-1234567.89；支出12345.60；另有2345；编号1，2，3。'),
 
         ('主流程：纯英文引语与受保护的数字',
          lambda t: process_text(t)['result'],
@@ -943,12 +895,47 @@ def run_tests():
         ('主流程：混用全角、半角和弯引号',
          lambda t: process_text(t)['result'],
          '“确认"后说＂确定＂。\n"下一段"。',
-         '“确认”后说“确定”。\n“下一段”。'),
+         '    “确认”后说“确定”。\n    “下一段”。'),
 
         ('主流程：链接和代码旁的引号',
          lambda t: process_text(t)['result'],
          '"https://example.com"和`print("ok")`',
-         '“https://example.com”和`print("ok")`'),
+         '    “https://example.com”和`print("ok")`'),
+
+        ('主流程：自然段缩进，清理旧标记并兼容不同换行符',
+         lambda t: (process_text(t)['result'], process_text(t)['indent_lines']),
+         '第一段。\r\n\r\n    第二段。\r\u3000第三段。',
+         ('    第一段。\n\n    第二段。\n    第三段。', 2)),
+
+        ('主流程：自然段缩进幂等',
+         lambda t: (process_text(t)['result'], process_text(t)['indent_lines']),
+         '    —第一段。\n\n    第二段。',
+         ('    —第一段。\n\n    第二段。', 0)),
+
+        ('主流程：词语和数字范围的横线合并，同时保留小数和负号',
+         lambda t: process_text(t)['result'],
+         '数据——算力--模型—中试——应用。范围1,200.50--2,300.75，温度-12。',
+         '    数据—算力—模型—中试—应用。范围1200.50—2300.75，温度-12。'),
+
+        ('主流程：英文横线合并，普通连字符和命令参数保留',
+         lambda t: process_text(t)['result'],
+         'Natural language--artificial intelligence with well-known methods and --version.',
+         '    Natural language—artificial intelligence with well-known methods and --version.'),
+
+        ('主流程：保留英文词间空格，还原 Word 标记并保留其他间隔号',
+         lambda t: process_text(t)['result'],
+         '据 Fortune·Business·Insights 记载，New   York。乘法a·b，乔治·奥威尔。',
+         '    据 Fortune Business Insights 记载，New   York。乘法a·b，乔治·奥威尔。'),
+
+        ('主流程：保留英文引语和标点后的词间空格',
+         lambda t: process_text(t)['result'],
+         'This is "my  phrase" in a sentence.\nHello, World',
+         '    This is “my  phrase” in a sentence.\n    Hello， World'),
+
+        ('主流程：代码块保留横线和原有格式，正文段落缩进',
+         lambda t: process_text(t)['result'],
+         '第一段。\n```py\nif x:\n    print("hi",  a--b)\n```\n第三段。',
+         '    第一段。\n```py\nif x:\n    print("hi",  a--b)\n```\n    第三段。'),
 
         # protect_special_patterns
         ('版本号保护：1.0 不转换',
@@ -1227,7 +1214,7 @@ def run_tests():
         ('破折号规范',
          normalize_symbols,
          '这是--一个---测试',
-         '这是——一个——测试'),
+         '这是—一个—测试'),
 
         ('全角转半角',
          normalize_symbols,
@@ -1238,12 +1225,12 @@ def run_tests():
         ('段首缩进',
          add_paragraph_indent,
          '第一段。\n\n第二段。',
-         '\u3000\u3000第一段。\n\n\u3000\u3000第二段。'),
+         '    第一段。\n\n    第二段。'),
 
         ('已有缩进不重复',
          add_paragraph_indent,
-         '\u3000\u3000已缩进段落。',
-         '\u3000\u3000已缩进段落。'),
+         '    已缩进段落。',
+         '    已缩进段落。'),
 
         # clean_spaces_per_line
         ('中文字符间空格删除',
@@ -1286,15 +1273,15 @@ def run_tests():
          'Hello World This is a test',
          'Hello World This is a test'),
 
-        ('英文多余空格压缩',
+        ('保留多个英文词间空格',
          clean_spaces_per_line,
          'Hello   World',
-         'Hello World'),
+         'Hello   World'),
 
         ('混合行：英文+中文标点+中文',
          clean_spaces_per_line,
          'Hello   World ， 你 好 ！',
-         'Hello World，你好！'),
+         'Hello   World，你好！'),
 
         ('行尾空格清理',
          clean_spaces_per_line,
@@ -1304,7 +1291,7 @@ def run_tests():
         ('示例：题目要求三行',
          clean_spaces_per_line,
          '    我 们 去 吃 饭 。\n## 项 目 背 景\nHello   World ， 你 好 ！',
-         '    我们去吃饭。\n## 项目背景\nHello World，你好！'),
+         '    我们去吃饭。\n## 项目背景\nHello   World，你好！'),
 
         # clean_whitespace（原有，保持）
         ('行尾空格清理',
@@ -1413,7 +1400,7 @@ def run_tests():
             'input': '等等...我想想---好吧',
             'checks': [
                 ('省略号规范', lambda r: '……' in r),
-                ('破折号规范', lambda r: '——' in r),
+                ('破折号规范', lambda r: '—' in r and '——' not in r),
             ],
         },
         {
@@ -1421,6 +1408,7 @@ def run_tests():
             'input': '第一段。\n\n第二段。\n\n\n\n第三段。',
             'checks': [
                 ('段首不新增全角空格', lambda r: '\u3000' not in r),
+                ('自然段以普通空格缩进', lambda r: all(not line or line.startswith(INDENT) for line in r.split('\n'))),
                 ('空行不超1个', lambda r: '\n\n\n' not in r),
             ],
         },
@@ -1516,7 +1504,7 @@ def run_tests():
 
     print(f'\n{sep}')
     if all_passed:
-        print('  ✅ 全部自检通过！保护规则生效，间距功能已删除，无遗漏。')
+        print('  ✅ 全部自检通过！')
     else:
         print('  ❌ 存在失败项，请检查对应函数！')
     print(sep)

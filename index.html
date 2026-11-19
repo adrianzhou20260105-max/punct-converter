@@ -3,120 +3,155 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="把英文标点转换为中文标点，并清理标记和数字千分位。">
+  <meta name="description" content="把英文标点转换为中文标点，整理段落缩进、连接线和数字千分位。">
   <title>中文标点转换器</title>
   <style>
     :root {
       color-scheme: light;
-      --paper: #f4f6fb;
-      --white: #fff;
-      --ink: #192642;
-      --muted: #52617a;
-      --line: #dce3ef;
-      --blue: #234dd7;
-      --blue-dark: #1d3eaf;
-      --tint: #edf2ff;
+      --canvas: #f4f3ee;
+      --paper: #fffefa;
+      --result-paper: #f9faf6;
+      --ink: #202b25;
+      --muted: #58645d;
+      --line: #d8dcd2;
+      --soft: #e9eee5;
+      --accent: #314d3c;
+      --accent-hover: #233b2d;
+      --focus: #58755f;
+      --serif: "Songti SC", "Noto Serif CJK SC", "SimSun", serif;
       font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
     }
     *, *::before, *::after { box-sizing: border-box; }
-    body { margin: 0; background: var(--paper); color: var(--ink); }
+    body { margin: 0; background: var(--canvas); color: var(--ink); }
     button, textarea { font: inherit; }
     button { cursor: pointer; }
     button:disabled { cursor: default; opacity: .55; }
     button:focus-visible, textarea:focus-visible, summary:focus-visible {
-      outline: 3px solid #5472e8;
+      outline: 2px solid var(--focus);
       outline-offset: 3px;
     }
-    .shell { width: min(1120px, 100% - 48px); margin-inline: auto; }
-    .site-header { background: var(--white); border-bottom: 1px solid var(--line); }
+    .shell { width: min(1120px, 100% - 64px); margin-inline: auto; }
+    .site-header { border-bottom: 1px solid var(--line); }
     .brand {
       display: flex;
       align-items: center;
-      gap: 10px;
-      min-height: 64px;
-      font-size: 15px;
-      font-weight: 700;
+      gap: 12px;
+      min-height: 65px;
+      font-size: 14px;
+      font-weight: 650;
+      letter-spacing: .04em;
     }
     .brand-mark {
       display: grid;
       place-items: center;
       width: 32px;
       height: 32px;
-      border-radius: 9px;
-      background: var(--blue);
-      color: white;
-      font-size: 20px;
-      line-height: 1;
+      padding-top: 5px;
+      border-radius: 6px;
+      background: var(--soft);
+      color: var(--accent);
+      font: 600 27px/1 Georgia, serif;
     }
-    main { padding-block: 47px 40px; }
-    .intro { margin-bottom: 28px; }
+    main { padding-block: clamp(30px, 6vw, 74px) 44px; }
+    .intro { margin-bottom: clamp(24px, 4vw, 39px); }
     h1 {
-      margin: 0 0 12px;
-      font-size: clamp(32px, 4.6vw, 52px);
-      line-height: 1.16;
+      margin: 0 0 16px;
+      font: 600 clamp(34px, 5vw, 60px)/1.18 var(--serif);
       letter-spacing: -.04em;
     }
-    .intro p { margin: 0; color: var(--muted); line-height: 1.7; }
+    .intro p {
+      margin: 0;
+      max-width: 42em;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.8;
+    }
     .editor {
       display: grid;
       grid-template-areas: "input output" "toolbar toolbar";
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: 19px;
-      background: var(--white);
-      box-shadow: 0 16px 40px -32px #233f71;
+      gap: 16px;
     }
-    .panel { display: flex; min-width: 0; flex-direction: column; }
+    .panel {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--paper);
+    }
     .input-panel { grid-area: input; }
-    .output-panel { grid-area: output; border-left: 1px solid var(--line); background: #fafbfe; }
+    .output-panel { grid-area: output; background: var(--result-paper); }
     .panel-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      min-height: 67px;
-      padding: 12px 24px;
+      min-height: 66px;
+      padding: 10px 21px;
       border-bottom: 1px solid var(--line);
     }
-    .panel-head label { font-size: 16px; font-weight: 700; }
+    .panel-head label { font-size: 15px; font-weight: 700; }
     .button {
-      min-height: 40px;
-      padding: 8px 15px;
+      min-height: 44px;
+      padding: 8px 16px;
       border: 1px solid var(--line);
-      border-radius: 9px;
-      background: var(--white);
+      border-radius: 7px;
+      background: transparent;
       color: var(--ink);
       font-size: 14px;
       font-weight: 650;
     }
-    .button:hover:not(:disabled) { border-color: #a3b5ee; background: var(--tint); }
-    .button.compact { min-height: 36px; padding: 6px 12px; }
-    .button.primary { padding-inline: 22px; background: var(--blue); border-color: var(--blue); color: white; }
-    .button.primary:hover:not(:disabled) { background: var(--blue-dark); border-color: var(--blue-dark); }
+    .button:hover:not(:disabled) { border-color: var(--focus); background: var(--soft); }
+    .button.compact {
+      min-height: 38px;
+      padding: 6px 10px;
+      border-color: transparent;
+      color: var(--accent);
+    }
+    .button.compact:hover:not(:disabled) { border-color: transparent; }
+    .button.primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding-inline: 19px;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--paper);
+    }
+    .button.primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+    .button-arrow { font-size: 17px; line-height: 1; }
     .text-area {
       display: block;
       width: calc(100% - 16px);
-      height: clamp(240px, 42vh, 450px);
+      height: clamp(245px, 40vh, 430px);
       margin: 8px;
-      padding: 14px 16px;
+      padding: 13px;
       resize: vertical;
       border: 0;
-      border-radius: 8px;
+      border-radius: 5px;
       background: transparent;
       color: var(--ink);
       font-size: 16px;
-      line-height: 1.75;
+      line-height: 1.85;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
-    .text-area::placeholder { color: #63718a; opacity: 1; }
+    .text-area::placeholder { color: var(--muted); opacity: 1; }
+    .output-panel .text-area { font-family: var(--serif); }
+    .output-panel .text-area::placeholder { font-family: system-ui, sans-serif; }
     .panel-foot {
       display: flex;
       align-items: center;
-      min-height: 40px;
+      justify-content: flex-end;
+      min-height: 42px;
       margin-top: auto;
-      padding-inline: 24px;
+      padding-inline: 21px;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
       font-variant-numeric: tabular-nums;
     }
     .toolbar {
@@ -125,51 +160,70 @@
       align-items: center;
       justify-content: space-between;
       flex-wrap: wrap;
-      gap: 12px 22px;
-      padding: 15px 24px;
-      border-top: 1px solid var(--line);
+      gap: 10px 22px;
     }
     .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-    .shortcut { margin-left: 4px; color: var(--muted); font-size: 12px; }
+    .shortcut { margin-left: 5px; color: var(--muted); font-size: 12px; }
+    .shortcut kbd { font: inherit; }
     .status { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
-    .status[data-error] { color: #9e2722; }
+    .status[data-error] { color: #962d26; }
     .mapping {
-      margin-top: 17px;
-      padding: 15px 20px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--white);
+      margin-top: 28px;
+      padding: 14px 0 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
       font-size: 14px;
     }
-    .mapping summary { width: fit-content; cursor: pointer; font-weight: 650; }
+    .mapping summary {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: fit-content;
+      min-height: 34px;
+      list-style: none;
+      cursor: pointer;
+      font-weight: 650;
+    }
+    .mapping summary::-webkit-details-marker { display: none; }
+    .mapping summary::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-inline-end: 1px solid currentColor;
+      border-block-end: 1px solid currentColor;
+      transform: translateY(-2px) rotate(45deg);
+    }
+    .mapping[open] summary::before { transform: translateY(2px) rotate(225deg); }
     .map-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(95px, 1fr));
-      gap: 8px;
-      margin-top: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+      gap: 7px;
+      margin-top: 10px;
     }
-    .map-grid span { padding: 7px; border-radius: 6px; background: var(--tint); text-align: center; }
+    .map-grid span { padding: 7px; background: var(--paper); border-radius: 5px; text-align: center; }
     .map-grid [data-error] { grid-column: 1 / -1; }
     @media (max-width: 720px) {
-      .shell { width: calc(100% - 28px); }
-      main { padding-top: 28px; }
+      .shell { width: calc(100% - 32px); }
+      .brand { min-height: 56px; }
       .editor { grid-template-areas: "input" "toolbar" "output"; grid-template-columns: minmax(0, 1fr); }
-      .output-panel { border-left: 0; border-top: 1px solid var(--line); }
-      .panel-head, .panel-foot, .toolbar { padding-inline: 16px; }
-      .panel-head { min-height: 56px; }
+      .panel-head, .panel-foot { padding-inline: 15px; }
+      .panel-head { min-height: 54px; }
       .text-area { height: 190px; padding: 8px; }
-      .toolbar { align-items: flex-start; flex-direction: column; }
+      .mapping { margin-top: 22px; }
+    }
+    @media (hover: none) {
+      .shortcut { display: none; }
     }
   </style>
 </head>
 <body data-engine="{{ engine }}">
   <header class="site-header">
-    <div class="shell brand"><span class="brand-mark" aria-hidden="true">“”</span>中文标点转换器</div>
+    <div class="shell brand"><span class="brand-mark" aria-hidden="true">“</span>标点转换器</div>
   </header>
   <main class="shell">
     <div class="intro">
       <h1>英文标点转中文</h1>
-      <p>转换引号和常用标点，自动去除井号、可见空格标记和数字千分位。</p>
+      <p>转换标点与引号，整理段首缩进和连接线，保留英文词间空格。</p>
     </div>
     <section class="editor" aria-label="标点转换">
       <div class="panel input-panel">
@@ -183,9 +237,9 @@
       </div>
       <div class="toolbar">
         <div class="actions">
-          <button class="button primary" id="btn-convert" type="button" disabled>转换标点</button>
+          <button class="button primary" id="btn-convert" type="button" disabled>转换标点<span class="button-arrow" aria-hidden="true">→</span></button>
           <button class="button" id="btn-clear" type="button">清空</button>
-          <span class="shortcut">Ctrl / ⌘ + Enter</span>
+          <span class="shortcut"><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd></span>
         </div>
         <p class="status" id="status" role="status"></p>
       </div>
@@ -301,7 +355,10 @@
     });
 
     document.getElementById('btn-example').addEventListener('click', () => {
-      input.value = '## 收支小结\n　他说:"本月收入 1,234,567.89 元, 支出 12,500 元。"\n＃备注□请核对 ＂已确认＂ 的金额.';
+      input.value = [
+        '据 Fortune Business Insights 报道, 2026——2034 年将持续见证产业变革.',
+        '项目将贯通"数据--算力--模型--中试--应用", 预算为 1,234,567.89 元.',
+      ].join('\n\n');
       clearResult();
       if (ready) setStatus('');
       input.focus();

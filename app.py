@@ -21,7 +21,7 @@ def convert():
     响应体：{
         "result":          最终文本,
         "count":           替换的英文标点数,
-        "indent_lines":    缩进段落数（兼容字段，现为 0）,
+        "indent_lines":    新增普通空格缩进的段落数,
         "quote_issues":    引号审查问题列表（list[dict]），空表示无问题,
         "quote_summary":   引号审查摘要（字符串），供前端气泡/提示展示,
         "quote_fixed":     自动修复的问题数量（int）,
